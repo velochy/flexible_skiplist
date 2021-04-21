@@ -17,16 +17,8 @@ class skiplist:
     self._psums = None # initialized by _init_zeros
 
     # If an initialization list was provided, use it
-    if in_lst is not None:
-
-      # Sort array if key was provided
-      if self._sort_fn: in_lst = sorted(in_lst,key=self._sort_fn)
-
-      # Create a perfectly balanced tree by feeding indices to _gen_level
-      # Doing it in reverse saves updating path/psums all the time.
-      li = len(in_lst)-1 # (li-i) is used to also reverse indices
-      for i,v in enumerate(reversed(in_lst)):
-        self._insert_after_path(v,self._gen_level(li-i))
+    if in_lst is not None and len(in_lst) > 0:
+      self._initialize_from_list(in_lst)
 
 
   # Called when first element added to initialize zeros to right types
@@ -92,7 +84,60 @@ class skiplist:
 
     return node
 
-  # Assumes both path and psums is filled accurately
+  # Initialize from values in a list - O(n) whereas serial insertion is O(nlogn)
+  def _initialize_from_list(self,in_lst):
+
+    # Find highest bit of length, and set height once
+    lvl, l = 1, len(in_lst)
+    while l>0:
+      l=l>>1
+      lvl+=1
+    self._used_level = lvl
+
+    # Initialize zeros (and everything else needed)
+    self._init_zeros(in_lst[0])
+
+    # Sort array if key was provided
+    if self._sort_fn: in_lst = sorted(in_lst,key=self._sort_fn)  
+
+    # Create a perfectly balanced tree structure by feeding indices to _gen_level
+    li = len(in_lst)-1 # (li-i) is used to also reverse indices
+    prev_ll = self._head[1] # linked list of head
+
+    # Doing it in reverse is faster because links are simpler to handle
+    for i,val in enumerate(reversed(in_lst)):
+
+      node = self._create_node(val,self._gen_level(li-i))
+      lvl = len(node[1])
+
+      # Insert it into level i linked list
+      csums = self._zeros
+      for i in range(lvl):
+        nxt = prev_ll[i]
+        node[1][i] = nxt
+        prev_ll[i] = node
+        
+        # Set the sum of next element
+        # Done this way it is amortized O(1)
+        for j,pv in enumerate(self._psums[i]):
+          nxt[2][j] = pv
+          self._psums[i+1][j] += pv
+          self._psums[i][j] = self._zeros[j]
+
+      for j,sf in enumerate(self.sum_field_fns):
+          self._psums[lvl-1][j] += sf(val)
+
+    # Final pass on sums - from head element to first of each level
+    for i in range(self._used_level+1):
+      nxt = prev_ll[i]
+      for j,pv in enumerate(self._psums[i]):
+        nxt[2][j] = pv
+        if i<self._used_level:
+          self._psums[i+1][j] += pv
+        self._psums[i][j] = self._zeros[j]
+
+
+  # Assumes both path and psums is filled accurateily
   def _insert_after_path(self,val,level=None):
 
     # If zeros have not yet been initialized, do so
