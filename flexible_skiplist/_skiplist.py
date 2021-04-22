@@ -25,20 +25,18 @@ class skiplist:
   def _init_zeros(self,val):
     self._zeros = [ fn(val)-fn(val) for fn in self.sum_field_fns]
 
-    self._head = self._create_node(None,self._used_level,True)
-    self._tail = self._create_node(None,self._used_level,True)
+    # Create head, tail, and path one level higher so we would have total sums in tail
+    level = self._used_level + 1
 
-    # Set head and tail to one level above used_level and keep them that way
-    # This will make trail track cumulative sums (including length of list)
-    self._head[1].append(None)
-    self._tail[1].append(None)
+    if self._sort_fn is not None:
+      self._tail = (None,[None]*level,self._zeros[:],None)
+      self._head = (None,[self._tail]*level,self._zeros[:],None)
+    else:
+      self._tail = (None,[None]*level,self._zeros[:])
+      self._head = (None,[self._tail]*level,self._zeros[:])
 
-    # Link head to tail in all levels
-    for i in range(len(self._head[1])):
-      self._head[1][i] = self._tail
-
-    self._psums = [self._zeros[:] for _ in range(self._used_level+1) ]
-    self._path = [self._head] * (self._used_level+1)
+    self._psums = [self._zeros[:] for _ in range(level) ]
+    self._path = [self._head] * level
 
   def _update_used_level(self,add):
     
@@ -69,18 +67,18 @@ class skiplist:
   def _gen_level(self, bits):
     lvl = 0
     while bits & (1<<lvl) and lvl < self._used_level: lvl+=1
-    return lvl+1 # at least 1
+    return (lvl>>1)+1 # at least 1
 
   # Helper function to create a node of fixed level
-  def _create_node(self,val,level=None,head_or_tail=False):
+  def _create_node(self,val,level=None):
     # Unless level specified, choose randomly, but at most one level higher than used_level
-    # Use p = 1/2, as it simplifies things a lot, and is only very marginally less efficient than the optimal 1/e
-    if level is None: level = self._gen_level(getrandbits(self._used_level))
-
-    node = (val,[None for _ in range(level)],self._zeros[:])
+    # Use p = 1/4, as it simplifies things a lot, and is only very marginally less efficient than the optimal 1/e
+    if level is None: level = self._gen_level(getrandbits(2*self._used_level))
 
     if self._sort_fn is not None:
-      node = node + (self._sort_fn(val) if not head_or_tail else None,)
+      node = (val,[None for _ in range(level)],self._zeros[:],self._sort_fn(val))
+    else:
+      node = (val,[None for _ in range(level)],self._zeros[:])
 
     return node
 
@@ -92,7 +90,7 @@ class skiplist:
     while l>0:
       l=l>>1
       lvl+=1
-    self._used_level = lvl
+    self._used_level = (lvl>>1)+1
 
     # Initialize zeros (and everything else needed)
     self._init_zeros(in_lst[0])
@@ -107,34 +105,38 @@ class skiplist:
     # Doing it in reverse is faster because links are simpler to handle
     for i,val in enumerate(reversed(in_lst)):
 
-      node = self._create_node(val,self._gen_level(li-i))
-      lvl = len(node[1])
+      lvl = self._gen_level(li-i)
+
+      if self._sort_fn is not None:
+        node = (val,prev_ll[:lvl],[ sf(val) for sf in self.sum_field_fns ],self._sort_fn(val))
+      else:
+        node = (val,prev_ll[:lvl],[ sf(val) for sf in self.sum_field_fns ])
+
+      for j,cv in enumerate(node[2]):
+          self._psums[lvl][j] += cv
 
       # Insert it into level i linked list
-      csums = self._zeros
-      for i in range(lvl):
-        nxt = prev_ll[i]
-        node[1][i] = nxt
+      prev_ll[0] = node
+      for i in range(1,lvl):
         prev_ll[i] = node
-        
+ 
         # Set the sum of next element
         # Done this way it is amortized O(1)
+        # Also start on second level as first level is already done at node creation
+        nxt = node[1][i]
         for j,pv in enumerate(self._psums[i]):
-          nxt[2][j] = pv
+          if i == len(nxt[1])-1: nxt[2][j] += pv
           self._psums[i+1][j] += pv
-          self._psums[i][j] = self._zeros[j]
-
-      for j,sf in enumerate(self.sum_field_fns):
-          self._psums[lvl-1][j] += sf(val)
+          self._psums[i][j] = self._zeros[j] 
 
     # Final pass on sums - from head element to first of each level
-    for i in range(self._used_level+1):
+    for i in range(1,self._used_level+1):
       nxt = prev_ll[i]
       for j,pv in enumerate(self._psums[i]):
-        nxt[2][j] = pv
-        if i<self._used_level:
-          self._psums[i+1][j] += pv
-        self._psums[i][j] = self._zeros[j]
+          if i == len(nxt[1])-1: nxt[2][j] += pv
+          if i < self._used_level:
+            self._psums[i+1][j] += pv
+          self._psums[i][j] = self._zeros[j]
 
 
   # Assumes both path and psums is filled accurateily
